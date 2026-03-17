@@ -3,6 +3,7 @@ const mongoose=require("mongoose");
 const path=require("path");
 const Chat=require("./models/chat.js")
 const methodOverride=require("method-override");
+const ExpressError=require("./ExpressError.js");
 const app=express();
 
 app.set("view engine", "ejs");
@@ -23,16 +24,34 @@ async function main() {
 
 let port=3000;
 
-app.get("/chats", async (req, res)=>{
+function asyncWrap(fn){
+    return function (req, res, next){
+        fn(req, res, next).catch((err)=>{
+            return next(err);
+        });
+    };
+};
+
+app.get("/chats", asyncWrap(async (req, res, next)=>{
     let chats=await Chat.find();
     res.render("index", {chats});
-});
+}));
 
 app.get("/chats/new", (req, res)=>{
+    //throw new ExpressError(404, "new error");
     res.render("new");
 });
 
-app.post("/chats", (req, res)=>{
+app.get("/chats/:id", asyncWrap(async (req, res, next)=>{
+    let {id}=req.params;
+    let chat=await Chat.findById(id);
+    if(!chat){
+        return next(new ExpressError(404, "Chat not found"));
+    }
+    res.send(chat);
+}));
+
+app.post("/chats", asyncWrap(async (req, res, next)=>{
     let {from, to, msg}=req.body;
     let newChat=new Chat({
         from: from,
@@ -40,37 +59,52 @@ app.post("/chats", (req, res)=>{
         msg: msg,
         created_at: new Date
     });
-    newChat.save().then((res)=>{
-        console.log("new chat created");
-    }).catch((err)=>{
-        console.log("error in new chat");
-    });
+    await newChat.save();
     res.redirect("/chats")
-});
+}));
 
-app.get("/chats/:id/edit", async (req, res)=>{
+app.get("/chats/:id/edit", asyncWrap(async (req, res, next)=>{
     let {id}=req.params;
     let chat=await Chat.findById(id);
     res.render("edit", {chat});
-});
+}));
 
-app.put("/chats/:id", async (req, res)=>{
+app.put("/chats/:id", asyncWrap(async (req, res, next)=>{
     let {id}=req.params;
     let {msg:newMsg}=req.body;
     let newChat= await Chat.findByIdAndUpdate(id, {msg:newMsg}, {runValidators:true, new:true});
     console.log(newChat);
     res.redirect("/chats");
-});
+}));
 
-app.delete("/chats/:id", async (req, res)=>{
+app.delete("/chats/:id", asyncWrap(async (req, res, next)=>{
     let {id}=req.params;
     let deletedChat=await Chat.findByIdAndDelete(id);
     console.log(deletedChat);
     res.redirect("/chats");
-});
+}));
 
 app.get("/", (req, res)=>{
     res.send("working");
+});
+
+app.use((err, req, res, next)=>{
+    console.log(err.name);
+    return next(err);
+});
+
+const handleValidationError=(err)=>{
+    console.log("This is a Validation Error. Please follow rules");
+    console.dir(err.message);
+    return err;
+};
+
+app.use((err, req, res, next)=>{
+    let {status=500, message="Some Error Occured"}=err;
+    if(err.name==="ValidationError"){
+        err=handleValidationError(err);
+    }
+    res.status(status).send(message);
 });
 
 app.listen(port, ()=>{
